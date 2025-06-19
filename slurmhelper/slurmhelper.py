@@ -286,6 +286,7 @@ with warnings.catch_warnings():
     def run_jobs(self, max_jobs=None, write_job_files=True):
         """Submit new .dill inputs, re-enqueue any failed tasks automatically."""
         import pickle
+        from subprocess import Popen, PIPE
         # persistent state file
         state_fn = os.path.join(self.get_job_dir(local_path=True), "submitted_indices.pkl")
         if os.path.isfile(state_fn):
