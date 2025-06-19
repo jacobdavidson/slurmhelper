@@ -397,19 +397,25 @@ with warnings.catch_warnings():
         return self.get_input_dir(local_path=local_path) + "/job_{:04d}.dill"
 
     def write_input_files(self):
+        import pickle
         created = 0
         skipped = 0
         self.clear_input_files()
 
         input_dir = self.get_input_dir(local_path=True)
 
-        # Determine the next free index by inspecting existing .dill files
-        existing = [f for f in os.listdir(input_dir) if f.endswith(".dill")]
-        if existing:
-            used = [int(fn.split("_")[1].split(".")[0]) for fn in existing]
-            start_idx = max(used) + 1
+        # Determine the next free index by inspecting existing .dill files and the log of submitted files
+        existing = [int(f.split("_")[1].split(".")[0]) for f in os.listdir(input_dir)
+                 if f.endswith(".dill")]
+        # also look at all indices ever submitted
+        state_fn = os.path.join(self.get_job_dir(local_path=True),
+                             "submitted_indices.pkl")
+        if os.path.isfile(state_fn):
+            with open(state_fn, "rb") as sf:
+                ever   = pickle.load(sf)
         else:
-            start_idx = 0
+            ever = set()
+            start_idx = max(existing + list(ever), default=-1) + 1
 
         iterable = enumerate(self.job_args, start=start_idx)
         if not self.is_daemon_client():
