@@ -284,103 +284,102 @@ with warnings.catch_warnings():
         postprocess_fun(self)
 
     def run_jobs(self, max_jobs=None, write_job_files=True):
-        if self.get_running_job_count() != 0:
-            print("Jobs are currently in the queue or running! Aborting.")
+        """Submit new .dill inputs, re-enqueue any failed tasks automatically."""
+        import pickle
+        # persistent state file
+        state_fn = os.path.join(self.get_job_dir(local_path=True), "submitted_indices.pkl")
+        if os.path.isfile(state_fn):
+            with open(state_fn, 'rb') as sf:
+                submitted_orig = pickle.load(sf)
+        else:
+            submitted_orig = set()
+
+        # collect all .dill indices available
+        input_dir = self.get_input_dir(local_path=True)
+        all_dills = [f for f in os.listdir(input_dir) if f.endswith('.dill')]
+        avail = set(int(fn.split('_')[1].split('.')[0]) for fn in all_dills)
+
+        # find running/pending indices from squeue
+        running = set()
+        for state_flag in ['R','PD']:
+            out, _ = Popen(
+                [f"squeue -u {self.get_username()} -h -t {state_flag} --format=%A"],
+                shell=True, stdout=PIPE, stderr=PIPE
+            ).communicate()
+            for line in out.decode().splitlines():
+                if '_' in line:
+                    try:
+                        running.add(int(line.split('_',1)[1]))
+                    except ValueError:
+                        pass
+
+        # find completed indices (zip exists)
+        completed = set()
+        for d in self.get_finished_job_directories(local_path=True):
+            try:
+                for fn in os.listdir(d):
+                    if fn.endswith('.zip') and fn.startswith('job_'):
+                        idx = int(fn.split('_')[1].split('.')[0])
+                        completed.add(idx)
+            except FileNotFoundError:
+                continue
+
+        # valid submitted = running or completed
+        valid_submitted = running.union(completed)
+
+        # determine new to submit
+        to_submit = sorted(avail - valid_submitted)
+        if not to_submit:
+            print("No new jobs to submit.")
+            # update persistent state in case some completed
+            with open(state_fn, 'wb') as sf:
+                pickle.dump(valid_submitted, sf)
             return
-        jobs = os.listdir(self.get_input_dir(local_path=True))
-        if len(jobs) == 0:
-            print("No prepared jobs to be run.")
-            return
-        
+
+        # rewrite job scripts if needed
         if write_job_files:
             self.write_job_file()
             self.write_batch_file()
 
-        # Collect job array indices to run.
-        indices = []
-        for f in jobs:
-            if not f.endswith(".dill"):
-                continue
-            idx = int(f[:-5].split("_")[-1])
-            indices.append(idx)
-        indices = list(sorted(indices))
-        total_job_count = len(indices)
-
-        # Combine consecutive sequences into one index pair (i.e. 1, 2, 3 becomes "1-3").
-        def format_consecutive_sequences(indices):
-            from itertools import groupby
-            from operator import itemgetter
-            indices = list(sorted(indices))
-            formatted_indices = []
-            for _, g in groupby(enumerate(indices), lambda t: t[0]-t[1]):
-                g = list(map(itemgetter(1), g))
-                del g[1:-1]
-                g = "-".join(map(str, g))
-                formatted_indices.append(g)
-            return ",".join(formatted_indices)
-
-        if self.max_job_array_size == "auto":
+        # chunk and submit
+        total = len(to_submit)
+        if self.max_job_array_size == 'auto':
+            out, _ = Popen(
+                ["scontrol show config | sed -n '/^MaxArraySize/s/.*= *//p'"],
+                shell=True, stdout=PIPE, stderr=PIPE
+            ).communicate()
             try:
-                from subprocess import Popen, PIPE
-                output, _ = Popen(["scontrol show config | sed -n '/^MaxArraySize/s/.*= *//p'"], stdin=PIPE, stdout=PIPE, stderr=PIPE, shell=True).communicate()
-                max_job_array_size = int(output.decode("ascii")) - 1
-            except Exception as e:
-                print("Error while querying scontrol for 'MaxArraySize': {}".format(str(e)))
+                max_arr = int(out.decode().strip()) - 1
+            except:
+                max_arr = total
         else:
-            max_job_array_size = self.max_job_array_size        
-        # User can overwrite max. job limit from command line.
-        if max_jobs is not None and max_jobs > 0:
-            max_job_array_size = max_jobs
+            max_arr = int(self.max_job_array_size)
+        if max_jobs:
+            max_arr = min(max_arr, max_jobs)
 
-        # Split very large jobs into multiple job arrays.
-        index_groups = [indices]
-        if max_job_array_size is not None:
-            index_groups = []
-            jobs_remaining = max_job_array_size
-            while len(indices) > 0:
-                # Split into chunks where each chunk's index differences are bounded.
-                first_index_value = indices[0]
-                n_indices_in_chunk = max_job_array_size
-                for idx, index_value in enumerate(indices):
-                    if (index_value - first_index_value) > max_job_array_size:
-                        n_indices_in_chunk = idx
-                        break
-                if jobs_remaining > 0:
-                    n_indices_in_chunk = min(jobs_remaining, n_indices_in_chunk)
-                jobs_remaining -= n_indices_in_chunk
-                one_job_indices = indices[:n_indices_in_chunk]
-                del indices[:n_indices_in_chunk]
-                index_groups.append(one_job_indices)
-        
-        total_submitted_jobs = 0
-        for idx, indices in enumerate(index_groups):
-            min_index = min(indices)
-            indices = [i-min_index for i in indices]
-
-            limit_concurrent_flag = f"%{self.concurrent_job_limit}" if self.concurrent_job_limit else ""
-            array_command = "--array=" + format_consecutive_sequences(indices) + limit_concurrent_flag
-            environment_vars = "--export=ALL,JOB_ARRAY_OFFSET={}".format(min_index)
+        for i in range(0, total, max_arr):
+            block = to_submit[i:i+max_arr]
+            offset = block[0]
+            rel = [str(x-offset) for x in block]
+            arr_flag = f"--array={','.join(rel)}"
+            if self.concurrent_job_limit:
+                arr_flag += f"%{self.concurrent_job_limit}"
+            env = f"--export=ALL,JOB_ARRAY_OFFSET={offset}"
             if self.exports:
-                environment_vars = environment_vars + "," + self.exports
-                
-            command = ["sbatch"] + [array_command] + [environment_vars] + [self.get_batch_filename()]
-
-            from subprocess import Popen, PIPE
-            p = Popen(command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-            _, error = p.communicate()
-                
-            if p.returncode != 0:
-                print("Running jobs failed with error: ")
-                if error:
-                    print(error.decode("ascii"))
-                print("Job command was: " + " ".join(command))
+                env += ',' + self.exports
+            cmd = ["sbatch", arr_flag, env, self.get_batch_filename()]
+            p = Popen(cmd, stdout=PIPE, stderr=PIPE)
+            out, err = p.communicate()
+            if p.returncode:
+                print(f"Error submitting {block}: {err.decode().strip()}")
             else:
-                print("Submitted job array {} of {} (i.e. {} of {} jobs).".format(
-                    idx + 1, len(index_groups),
-                    len(indices), total_job_count))
-                total_submitted_jobs += len(indices)
-                if total_submitted_jobs >= max_job_array_size:
-                    break
+                print(f"Submitted jobs {block[0]}–{block[-1]} ({len(block)}/{total})")
+
+        # update persistent state
+        new_state = valid_submitted.union(to_submit)
+        with open(state_fn, 'wb') as sf:
+            pickle.dump(new_state, sf)
+
     
     def clear_directory(self, directory, file_ending):
         try:
