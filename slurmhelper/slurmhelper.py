@@ -306,7 +306,7 @@ with warnings.catch_warnings():
                 # 4) find running/pending indices from squeue
         running = set()
         for state_flag in ['R','PD']:
-            cmd = f"squeue -u {self.get_username()} -h -t {state_flag} --format=%i"
+            cmd = f"squeue -u {self.get_username()} -h -t {state_flag} --format=%i --name={self.name}"
             out, _ = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE).communicate()
             for token in out.decode().split():
                 # 1) single‐task ID, e.g. "23209724_5"
