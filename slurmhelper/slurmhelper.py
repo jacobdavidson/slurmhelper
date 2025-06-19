@@ -287,52 +287,24 @@ with warnings.catch_warnings():
         """Submit new .dill inputs, re-enqueue any failed tasks automatically."""
         import pickle
         from subprocess import Popen, PIPE
-        import re
-        # persistent state file
+        # Load submitted indices
         state_fn = os.path.join(self.get_job_dir(local_path=True), "submitted_indices.pkl")
         if os.path.isfile(state_fn):
             with open(state_fn, 'rb') as sf:
-                submitted_orig = pickle.load(sf)
+                submitted = pickle.load(sf)
         else:
-            submitted_orig = set()
+            submitted = set()
 
-        # collect all .dill indices available
+        # Collect all .dill indices available
         input_dir = self.get_input_dir(local_path=True)
         all_dills = [f for f in os.listdir(input_dir) if f.endswith('.dill')]
         avail = set(int(fn.split('_')[1].split('.')[0]) for fn in all_dills)
 
-        # find running/pending indices from squeue
-        running = set()
-                # 4) find running/pending indices from squeue
-        running = set()
-        for state_flag in ['R','PD']:
-            cmd = f"squeue -u {self.get_username()} -h -t {state_flag} --format=%i --name={self.name}"
-            out, _ = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE).communicate()
-            for token in out.decode().split():
-                # 1) single‐task ID, e.g. "23209724_5"
-                m = re.search(r'_(\d+)$', token)
-                if m:
-                    running.add(int(m.group(1)))
-                    continue
-                # 2) range of tasks, e.g. "23209724_[708-2146]"
-                m = re.search(r'_\[(\d+)-(\d+)\]', token)
-                if m:
-                    start, end = map(int, m.groups())
-                    running.update(range(start, end+1))
-
-        # 5) find completed indices (zip exists)
-        completed = set()
-        for d in self.get_finished_job_directories(local_path=True):
-            try:
-                for fn in os.listdir(d):
-                    if fn.endswith('.zip') and fn.startswith('job_'):
-                        idx = int(fn.split('_')[1].split('.')[0])
-                        completed.add(idx)
-            except FileNotFoundError:
-                continue
-
-        # valid_submitted = running or completed
-        valid_submitted = running.union(completed)
+        # Determine which indices to submit: those not in 'submitted'
+        to_submit = sorted(avail - submitted)
+        if not to_submit:
+            print("No new jobs to submit based on submitted_indices state.")
+            return
 
         # determine new to submit
         to_submit = sorted(avail - valid_submitted)
@@ -386,6 +358,7 @@ with warnings.catch_warnings():
         new_state = valid_submitted.union(to_submit)
         with open(state_fn, 'wb') as sf:
             pickle.dump(new_state, sf)
+
 
 
     
