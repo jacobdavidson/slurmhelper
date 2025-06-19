@@ -331,11 +331,26 @@ with warnings.catch_warnings():
         if max_jobs:
             max_arr = min(max_arr, max_jobs)
 
+        # helper function for shortening index ranges submitted
+        def _compress(indices):
+            """[0,1,2,5,6,9] → '0-2,5-6,9'."""
+            it = iter(sorted(indices))
+            start = prev = next(it)
+            out = []
+            for n in it:
+                if n == prev + 1:
+                    prev = n
+                else:
+                    out.append(f"{start}-{prev}" if start != prev else f"{start}")
+                    start = prev = n
+            out.append(f"{start}-{prev}" if start != prev else f"{start}")
+            return ",".join(out)        
+
         for i in range(0, total, max_arr):
             block = to_submit[i:i+max_arr]
             offset = block[0]
-            rel = [str(x-offset) for x in block]
-            arr_flag = f"--array={','.join(rel)}"
+            rel_comp = _compress([x - offset for x in block])
+            arr_flag = f"--array={rel_comp}"
             if self.concurrent_job_limit:
                 arr_flag += f"%{self.concurrent_job_limit}"
             env = f"--export=ALL,JOB_ARRAY_OFFSET={offset}"
