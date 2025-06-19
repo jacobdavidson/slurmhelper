@@ -428,7 +428,17 @@ with warnings.catch_warnings():
         skipped = 0
         self.clear_input_files()
 
-        iterable = enumerate(self.job_args)
+        input_dir = self.get_input_dir(local_path=True)
+
+        # Determine the next free index by inspecting existing .dill files
+        existing = [f for f in os.listdir(input_dir) if f.endswith(".dill")]
+        if existing:
+            used = [int(fn.split("_")[1].split(".")[0]) for fn in existing]
+            start_idx = max(used) + 1
+        else:
+            start_idx = 0
+
+        iterable = enumerate(self.job_args, start=start_idx)
         if not self.is_daemon_client():
             iterable = progress_bar(iterable)
 
