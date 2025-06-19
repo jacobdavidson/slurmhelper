@@ -302,11 +302,11 @@ with warnings.catch_warnings():
 
         # find running/pending indices from squeue
         running = set()
+                # 4) find running/pending indices from squeue
+        running = set()
         for state_flag in ['R','PD']:
-            out, _ = Popen(
-                [f"squeue -u {self.get_username()} -h -t {state_flag} --format=%A"],
-                shell=True, stdout=PIPE, stderr=PIPE
-            ).communicate()
+            cmd = f"squeue -u {self.get_username()} -h -t {state_flag} --format=%A --name={self.name}"
+            out, _ = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE).communicate()
             for line in out.decode().splitlines():
                 if '_' in line:
                     try:
@@ -314,7 +314,7 @@ with warnings.catch_warnings():
                     except ValueError:
                         pass
 
-        # find completed indices (zip exists)
+        # 5) find completed indices (zip exists)
         completed = set()
         for d in self.get_finished_job_directories(local_path=True):
             try:
@@ -325,7 +325,7 @@ with warnings.catch_warnings():
             except FileNotFoundError:
                 continue
 
-        # valid submitted = running or completed
+        # valid_submitted = running or completed
         valid_submitted = running.union(completed)
 
         # determine new to submit
@@ -380,6 +380,7 @@ with warnings.catch_warnings():
         new_state = valid_submitted.union(to_submit)
         with open(state_fn, 'wb') as sf:
             pickle.dump(new_state, sf)
+
 
     
     def clear_directory(self, directory, file_ending):
