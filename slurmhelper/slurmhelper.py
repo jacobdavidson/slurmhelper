@@ -415,7 +415,7 @@ with warnings.catch_warnings():
                 ever   = pickle.load(sf)
         else:
             ever = set()
-            start_idx = max(existing + list(ever), default=-1) + 1
+        start_idx = max(existing + list(ever), default=-1) + 1
 
         iterable = enumerate(self.job_args, start=start_idx)
         if not self.is_daemon_client():
