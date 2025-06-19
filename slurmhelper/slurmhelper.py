@@ -300,19 +300,14 @@ with warnings.catch_warnings():
         all_dills = [f for f in os.listdir(input_dir) if f.endswith('.dill')]
         avail = set(int(fn.split('_')[1].split('.')[0]) for fn in all_dills)
 
-        # Determine which indices to submit: those not in 'submitted'
-        to_submit = sorted(avail - submitted)
-        if not to_submit:
-            print("No new jobs to submit based on submitted_indices state.")
-            return
 
         # determine new to submit
-        to_submit = sorted(avail - valid_submitted)
+        to_submit = sorted(avail - submitted)
         if not to_submit:
             print("No new jobs to submit.")
             # update persistent state in case some completed
             with open(state_fn, 'wb') as sf:
-                pickle.dump(valid_submitted, sf)
+                pickle.dump(submitted, sf)
             return
 
         # rewrite job scripts if needed
@@ -355,11 +350,9 @@ with warnings.catch_warnings():
                 print(f"Submitted jobs {block[0]}–{block[-1]} ({len(block)}/{total})")
 
         # update persistent state
-        new_state = valid_submitted.union(to_submit)
+        new_state = submitted.union(to_submit)
         with open(state_fn, 'wb') as sf:
             pickle.dump(new_state, sf)
-
-
 
     
     def clear_directory(self, directory, file_ending):
