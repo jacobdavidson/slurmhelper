@@ -287,6 +287,7 @@ with warnings.catch_warnings():
         """Submit new .dill inputs, re-enqueue any failed tasks automatically."""
         import pickle
         from subprocess import Popen, PIPE
+        import re
         # persistent state file
         state_fn = os.path.join(self.get_job_dir(local_path=True), "submitted_indices.pkl")
         if os.path.isfile(state_fn):
@@ -305,14 +306,19 @@ with warnings.catch_warnings():
                 # 4) find running/pending indices from squeue
         running = set()
         for state_flag in ['R','PD']:
-            cmd = f"squeue -u {self.get_username()} -h -t {state_flag} --format=%A --name={self.name}"
+            cmd = f"squeue -u {self.get_username()} -h -t {state_flag} --format=%i"
             out, _ = Popen(cmd, shell=True, stdout=PIPE, stderr=PIPE).communicate()
-            for line in out.decode().splitlines():
-                if '_' in line:
-                    try:
-                        running.add(int(line.split('_',1)[1]))
-                    except ValueError:
-                        pass
+            for token in out.decode().split():
+                # 1) single‐task ID, e.g. "23209724_5"
+                m = re.search(r'_(\d+)$', token)
+                if m:
+                    running.add(int(m.group(1)))
+                    continue
+                # 2) range of tasks, e.g. "23209724_[708-2146]"
+                m = re.search(r'_\[(\d+)-(\d+)\]', token)
+                if m:
+                    start, end = map(int, m.groups())
+                    running.update(range(start, end+1))
 
         # 5) find completed indices (zip exists)
         completed = set()
